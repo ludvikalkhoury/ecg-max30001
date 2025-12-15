@@ -1064,16 +1064,17 @@ function stopRecordingAndSaveImage(){
 
   // Export image (iOS: user taps "Save Image" to Photos)
   out.toBlob(blob => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "tinzr_ecg_30s.png";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    setStatus("Image downloaded (use Save Image → Photos)");
-  }, "image/png");
+  const url = URL.createObjectURL(blob);
+
+  // ✅ iOS/Bluefy reliable: OPEN the image so you can Share → Save Image
+  const w = window.open(url, "_blank");
+
+  // Fallback if popup blocked: navigate current tab
+  if (!w) window.location.href = url;
+
+  setStatus("Image opened. Tap Share → Save Image.");
+}, "image/png");
+
 }
 
 /* Record toggle wiring */
@@ -1092,3 +1093,4 @@ tglRecord.addEventListener("click", async () => {
 </script>
 </body>
 </html>
+
