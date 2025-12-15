@@ -1,25 +1,985 @@
 <!doctype html>
-<html>
-<body style="font-family:sans-serif">
-<h2>BLE Test</h2>
-<button id="btn">Find TinZr</button>
-<pre id="log"></pre>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>TinZr ECG Viewer (Web)</title>
+<style>
+  :root{
+    --bg:#020817;
+    --panel:#0b1220;
+    --text:#E3F2FD;
+    --muted:#A8B3CF;
+    --accent:#5aa7ff;
+    --curve:#F5F5F5;
+    --danger:#FF5252;
+    --dangerFill:#FFCDD2;
+    --pill: rgba(0,0,0,0.45);
+    --border: rgba(255,255,255,0.10);
+  }
+  html,body{height:100%; margin:0; background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;}
+  .app{
+    width: 600px;
+    height: 450px;
+    margin: 16px auto;
+    box-sizing:border-box;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    padding: 12px 16px;
+    background: transparent;
+    border-radius: 16px;
+  }
+  .header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    padding-bottom:4px;
+  }
+  .title{
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .battery{
+    display:flex; align-items:center; gap:10px;
+  }
+  .battBtn{
+    cursor:pointer;
+    user-select:none;
+    border:1px solid var(--border);
+    background: rgba(255,255,255,0.04);
+    color: var(--text);
+    padding:8px 10px;
+    border-radius: 12px;
+    font-weight: 700;
+  }
+  .panel{
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 10px;
+  }
+  .grid{
+    display:grid;
+    grid-template-columns: 160px 1fr;
+    gap:10px;
+    align-items:center;
+  }
+  .row2{
+    display:grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap:14px;
+    align-items:center;
+    margin-top:10px;
+  }
+  .btn{
+    cursor:pointer;
+    border:1px solid var(--border);
+    background: rgba(255,255,255,0.05);
+    color: var(--text);
+    padding:10px 12px;
+    border-radius: 12px;
+    font-weight: 800;
+  }
+  .btn:disabled{ opacity:0.5; cursor:not-allowed; }
+  .selectLike{
+    width:100%;
+    border:1px solid var(--border);
+    background: rgba(0,0,0,0.22);
+    color: var(--text);
+    padding:10px 12px;
+    border-radius: 12px;
+    box-sizing:border-box;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  .toggleWrap{
+    display:flex; align-items:center; justify-content:space-between;
+    border:1px solid var(--border);
+    background: rgba(0,0,0,0.16);
+    padding:10px 12px;
+    border-radius: 12px;
+  }
+  .toggleWrap span{color:var(--text); font-weight:800;}
+  .toggle{
+    width:46px; height:26px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.12);
+    border:1px solid var(--border);
+    position:relative;
+    cursor:pointer;
+    flex: 0 0 auto;
+  }
+  .knob{
+    position:absolute; top:3px; left:3px;
+    width:20px; height:20px; border-radius:999px;
+    background: rgba(255,255,255,0.85);
+    transition: transform 120ms ease;
+  }
+  .toggle.on{ background: rgba(90,167,255,0.35); }
+  .toggle.on .knob{ transform: translateX(20px); background: rgba(255,255,255,0.95); }
+
+  .statusRow{
+    display:flex; align-items:center; gap:10px; margin-top:10px;
+  }
+  .status{
+    flex:1;
+    border:1px solid var(--border);
+    background: rgba(0,0,0,0.16);
+    border-radius: 12px;
+    padding: 10px 12px;
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  .plotWrap{
+    position:relative;
+    flex:1;
+    background: var(--bg);
+    border:1px solid var(--border);
+    border-radius: 16px;
+    overflow:hidden;
+  }
+  canvas{ display:block; width:100%; height:100%; }
+  .hud{
+    position:absolute; right:10px; top:10px;
+    background: var(--pill);
+    padding:4px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    color:#fff;
+    pointer-events:none;
+    white-space:nowrap;
+  }
+  .foot{
+    font-size: 12px;
+    color: var(--muted);
+    margin-top:4px;
+    line-height:1.3;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <div class="title">TinZr ECG Viewer</div>
+    <div class="battery">
+      <button class="battBtn" id="btnBatt">🔋 Battery</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="grid">
+      <button class="btn" id="btnFind">Find Devices</button>
+      <div class="selectLike" id="selectedDevice">No device selected</div>
+    </div>
+
+    <div class="row2">
+      <div class="toggleWrap">
+        <span>Connect</span>
+        <div class="toggle" id="tglConnect"><div class="knob"></div></div>
+      </div>
+      <div class="toggleWrap">
+        <span>Stream ECG</span>
+        <div class="toggle" id="tglStream"><div class="knob"></div></div>
+      </div>
+      <div class="toggleWrap">
+        <span>Record</span>
+        <div class="toggle" id="tglRecord"><div class="knob"></div></div>
+      </div>
+    </div>
+
+    <div class="statusRow">
+      <button class="btn" id="btnFlip" aria-pressed="true">Flip ECG</button>
+      <div class="status" id="status">Status: Idle</div>
+    </div>
+  </div>
+
+  <div class="plotWrap">
+    <div class="hud" id="hud">Fs_out=120.0 Hz | HR: -- bpm</div>
+    <canvas id="plot"></canvas>
+  </div>
+
+  <div class="foot">
+    iPhone: use Bluefy (or another WebBLE browser). iOS uses the system picker, so the app shows “Selected Device” instead of a scan list.
+  </div>
+</div>
 
 <script>
-const log = msg => document.getElementById("log").textContent += msg + "\n";
+/* ================== CONFIG (match your Python) ================== */
+const TINZR_BLE_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+const TINZR_BLE_RX_CHAR_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+const TINZR_BLE_TX_CHAR_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a9";
 
-document.getElementById("btn").onclick = async () => {
-  try {
-    log("Requesting device...");
-    const device = await navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: "TinZr" }],
-      optionalServices: ["4fafc201-1fb5-459e-8fcc-c5c9c331914b"]
-    });
-    log("Selected: " + device.name);
-  } catch (e) {
-    log("ERROR: " + e);
+const DEVICE_PREFIX = "TinZr";
+const CMD_START = new Uint8Array([ "S".charCodeAt(0) ]);
+const CMD_STOP  = new Uint8Array([ "E".charCodeAt(0) ]);
+const CMD_BATT  = new Uint8Array([ "B".charCodeAt(0), "A".charCodeAt(0), "T".charCodeAt(0) ]);
+
+// Frame: <iB (little-endian int32 + uint8) => 5 bytes
+const FRAME_SIZE = 5;
+
+// Viewer config
+const FS_RESAMP_HZ = 120.0;
+const WINDOW_SEC = 5.0;
+const UPDATE_MS = 10;
+const MAX_RAW_SAMPLES = 40000;
+
+/* ================== STATE ================== */
+let bleDevice = null;
+let gattServer = null;
+let rxChar = null;
+let txChar = null;
+
+let streaming = false;
+let recording = false;
+
+let flipSign = -1.0; // default matches your Python code
+let battPct = null;
+let fsEst = null;
+let hrBpm = null;
+
+let byteBuf = []; // raw incoming bytes (array of 0..255)
+
+let sampleCount = 0;
+let idxRaw = [];
+let ecgRaw = [];
+
+// Calibration
+let calibStartTime = null;
+let calibStartCount = null;
+const CALIB_SAMPLES = Math.floor(4 * FS_RESAMP_HZ);
+let calibrating = false;
+
+// Recording buffers (raw; resample on stop)
+let recIdxRaw = [];
+let recEcgRaw = [];
+let recBattRaw = [];
+
+/* ================== UI ================== */
+const btnFind = document.getElementById("btnFind");
+const selectedDeviceEl = document.getElementById("selectedDevice");
+const tglConnect = document.getElementById("tglConnect");
+const tglStream = document.getElementById("tglStream");
+const tglRecord = document.getElementById("tglRecord");
+const btnFlip = document.getElementById("btnFlip");
+const btnBatt = document.getElementById("btnBatt");
+const statusEl = document.getElementById("status");
+const hudEl = document.getElementById("hud");
+
+function setStatus(s){ statusEl.textContent = "Status: " + s; }
+
+function setToggle(el, on){
+  el.classList.toggle("on", !!on);
+  el.dataset.on = on ? "1" : "0";
+}
+function getToggle(el){ return el.dataset.on === "1"; }
+
+function webBleAvailable(){
+  return !!(navigator.bluetooth && navigator.bluetooth.requestDevice);
+}
+
+function enableControls(){
+  btnFind.disabled = !webBleAvailable();
+
+  // Connect enabled only after a device is selected
+  tglConnect.style.pointerEvents = bleDevice ? "auto" : "none";
+  tglConnect.style.opacity = bleDevice ? "1.0" : "0.45";
+
+  // Stream enabled only when connected
+  const connected = !!(gattServer && gattServer.connected && rxChar && txChar);
+  tglStream.style.pointerEvents = connected ? "auto" : "none";
+  tglStream.style.opacity = connected ? "1.0" : "0.45";
+
+  // Record enabled only when streaming
+  tglRecord.style.pointerEvents = (connected && streaming) ? "auto" : "none";
+  tglRecord.style.opacity = (connected && streaming) ? "1.0" : "0.45";
+}
+
+function updateHud(){
+  let fsText = (fsEst && fsEst > 0)
+    ? `Fs_in≈${fsEst.toFixed(1)} Hz  →  Fs_out=${FS_RESAMP_HZ.toFixed(1)} Hz`
+    : `Fs_out=${FS_RESAMP_HZ.toFixed(1)} Hz`;
+  let hrText = (hrBpm && hrBpm > 0) ? `HR: ${Math.round(hrBpm)} bpm` : "HR: -- bpm";
+  hudEl.textContent = `${fsText}   |   ${hrText}`;
+}
+
+/* ================== BLE: SELECT DEVICE (iOS/Bluefy way) ================== */
+btnFind.addEventListener("click", async () => {
+  if (!webBleAvailable()){
+    setStatus("Web Bluetooth not available in this browser");
+    return;
   }
-};
+
+  try{
+    setStatus("Opening device picker...");
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ namePrefix: DEVICE_PREFIX }],
+      optionalServices: [TINZR_BLE_SERVICE_UUID]
+    });
+
+    bleDevice = device;
+    selectedDeviceEl.textContent = device.name || "Selected device";
+    setStatus("Device selected");
+    setToggle(tglConnect, false);
+    setToggle(tglStream, false);
+    setToggle(tglRecord, false);
+
+    // Handle unexpected disconnects
+    bleDevice.addEventListener("gattserverdisconnected", () => {
+      // Stop everything cleanly
+      streaming = false;
+      recording = false;
+      rxChar = null;
+      txChar = null;
+      gattServer = null;
+
+      setToggle(tglConnect, false);
+      setToggle(tglStream, false);
+      setToggle(tglRecord, false);
+      setStatus("Disconnected");
+      enableControls();
+    });
+
+    enableControls();
+  }catch(e){
+    setStatus("Picker cancelled / error");
+  }
+});
+
+/* ================== BLE: CONNECT/DISCONNECT ================== */
+async function connectDevice(){
+  if (!bleDevice){
+    setStatus("No device selected");
+    return false;
+  }
+
+  try{
+    setStatus("Connecting...");
+    gattServer = await bleDevice.gatt.connect();
+
+    const svc = await gattServer.getPrimaryService(TINZR_BLE_SERVICE_UUID);
+    rxChar = await svc.getCharacteristic(TINZR_BLE_RX_CHAR_UUID);
+    txChar = await svc.getCharacteristic(TINZR_BLE_TX_CHAR_UUID);
+
+    await txChar.startNotifications();
+    txChar.addEventListener("characteristicvaluechanged", onNotify);
+
+    setStatus("Connected");
+    return true;
+  }catch(e){
+    setStatus("Connect failed");
+    rxChar = null; txChar = null; gattServer = null;
+    return false;
+  }finally{
+    enableControls();
+  }
+}
+
+async function disconnectDevice(){
+  try{
+    if (txChar){
+      try{
+        txChar.removeEventListener("characteristicvaluechanged", onNotify);
+        await txChar.stopNotifications();
+      }catch(_){}
+    }
+    // stop stream command if needed
+    if (streaming){
+      await stopStreaming();
+    }
+  }catch(_){}
+
+  try{
+    if (bleDevice && bleDevice.gatt && bleDevice.gatt.connected){
+      bleDevice.gatt.disconnect();
+    }
+  }catch(_){}
+
+  streaming = false;
+  recording = false;
+  rxChar = null;
+  txChar = null;
+  gattServer = null;
+
+  setStatus("Disconnected");
+  enableControls();
+}
+
+tglConnect.addEventListener("click", async () => {
+  const wantOn = !getToggle(tglConnect);
+
+  if (wantOn){
+    const ok = await connectDevice();
+    if (ok){
+      setToggle(tglConnect, true);
+    }else{
+      setToggle(tglConnect, false);
+    }
+  }else{
+    // user turned off connect
+    setToggle(tglConnect, false);
+    setToggle(tglStream, false);
+    setToggle(tglRecord, false);
+    await disconnectDevice();
+  }
+
+  enableControls();
+});
+
+/* ================== BLE: STREAMING ================== */
+async function writeCmd(bytes){
+  if (!rxChar) throw new Error("No RX characteristic");
+  await rxChar.writeValue(bytes);
+}
+
+async function startStreaming(){
+  if (!rxChar || !txChar || !(gattServer && gattServer.connected)){
+    setStatus("Not connected");
+    return false;
+  }
+
+  try{
+    // Reset buffers
+    streaming = false;
+    byteBuf = [];
+
+    sampleCount = 0;
+    idxRaw = [];
+    ecgRaw = [];
+
+    fsEst = null;
+    calibStartTime = null;
+    calibStartCount = null;
+    calibrating = true;
+
+    // Reset recording buffers too (matches your Python)
+    recIdxRaw = [];
+    recEcgRaw = [];
+    recBattRaw = [];
+
+    battPct = null;
+    hrBpm = null;
+    updateHud();
+
+    await writeCmd(CMD_START);
+
+    streaming = true;
+    setStatus("Starting ECG streaming...");
+    return true;
+  }catch(e){
+    streaming = false;
+    setStatus("Start cmd error");
+    return false;
+  }finally{
+    enableControls();
+  }
+}
+
+async function stopStreaming(){
+  if (!streaming) return;
+
+  try{
+    await writeCmd(CMD_STOP);
+  }catch(_){}
+
+  streaming = false;
+
+  if (recording){
+    await stopRecordingAndSave();
+    setToggle(tglRecord, false);
+  }
+
+  setStatus("Streaming stopped");
+  enableControls();
+}
+
+tglStream.addEventListener("click", async () => {
+  const wantOn = !getToggle(tglStream);
+
+  if (wantOn){
+    const ok = await startStreaming();
+    setToggle(tglStream, !!ok);
+  }else{
+    setToggle(tglStream, false);
+    await stopStreaming();
+  }
+  enableControls();
+});
+
+/* ================== Battery request ================== */
+btnBatt.addEventListener("click", async () => {
+  if (!rxChar || !(gattServer && gattServer.connected)){
+    setStatus("Connect to TinZrECG to query battery");
+    return;
+  }
+  try{
+    await writeCmd(CMD_BATT);
+    setStatus("Requested battery refresh");
+  }catch(e){
+    setStatus("Battery refresh error");
+  }
+});
+
+/* ================== Flip ================== */
+btnFlip.addEventListener("click", () => {
+  const pressed = (btnFlip.getAttribute("aria-pressed") === "true");
+  const next = !pressed;
+  btnFlip.setAttribute("aria-pressed", next ? "true" : "false");
+
+  // In your Python: checked => flip_sign=-1 else +1
+  flipSign = next ? -1.0 : 1.0;
+
+  // Keep visual label stable
+  btnFlip.textContent = "Flip ECG";
+});
+
+/* ================== BLE notifications parsing: <iB ================== */
+function readInt32LE(b0,b1,b2,b3){
+  // Convert 4 bytes to signed int32 little-endian
+  const u = (b0) | (b1<<8) | (b2<<16) | (b3<<24);
+  return u | 0;
+}
+
+function onNotify(ev){
+  const dv = ev.target.value; // DataView
+  const n = dv.byteLength;
+  for (let i=0; i<n; i++){
+    byteBuf.push(dv.getUint8(i));
+  }
+
+  const nFrames = Math.floor(byteBuf.length / FRAME_SIZE);
+  if (nFrames <= 0) return;
+
+  for (let f=0; f<nFrames; f++){
+    const off = f * FRAME_SIZE;
+    const ecg_i = readInt32LE(byteBuf[off+0], byteBuf[off+1], byteBuf[off+2], byteBuf[off+3]);
+    const batt_i = byteBuf[off+4];
+
+    battPct = batt_i;
+
+    if (!streaming) continue;
+
+    sampleCount += 1;
+    idxRaw.push(sampleCount);
+    ecgRaw.push(ecg_i);
+
+    if (recording){
+      recIdxRaw.push(sampleCount);
+      recEcgRaw.push(ecg_i);
+      recBattRaw.push(batt_i);
+    }
+  }
+
+  // drop consumed bytes
+  const remaining = byteBuf.length - nFrames * FRAME_SIZE;
+  if (remaining > 0){
+    byteBuf = byteBuf.slice(byteBuf.length - remaining);
+  }else{
+    byteBuf = [];
+  }
+
+  // cap plot buffers
+  if (idxRaw.length > MAX_RAW_SAMPLES){
+    idxRaw = idxRaw.slice(-MAX_RAW_SAMPLES);
+    ecgRaw = ecgRaw.slice(-MAX_RAW_SAMPLES);
+  }
+
+  // Fs calibration (same idea as your Python)
+  if (streaming && fsEst === null){
+    if (calibStartTime === null){
+      calibStartTime = performance.now() / 1000.0;
+      calibStartCount = sampleCount;
+    }else{
+      const nSamp = sampleCount - calibStartCount;
+      if (nSamp >= CALIB_SAMPLES){
+        const tNow = performance.now() / 1000.0;
+        const dt = tNow - calibStartTime;
+        if (dt > 0){
+          fsEst = nSamp / dt;
+
+          // throw away calibration samples (matches your Python)
+          idxRaw = [];
+          ecgRaw = [];
+
+          recIdxRaw = [];
+          recEcgRaw = [];
+          recBattRaw = [];
+
+          sampleCount = 0;
+          calibStartTime = null;
+          calibStartCount = null;
+          calibrating = false;
+
+          setStatus("Streaming");
+        }
+      }
+    }
+  }
+}
+
+/* ================== HR + peaks (same logic style as your Python) ================== */
+function updateHrAndPeaks(t, y){
+  if (!t || !y || y.length < 10){
+    hrBpm = null;
+    return [];
+  }
+
+  // center
+  let mean = 0;
+  for (let i=0;i<y.length;i++) mean += y[i];
+  mean /= y.length;
+
+  const sig = new Array(y.length);
+  let maxAbs = 0;
+  for (let i=0;i<y.length;i++){
+    sig[i] = y[i] - mean;
+    const a = Math.abs(sig[i]);
+    if (a > maxAbs) maxAbs = a;
+  }
+  if (maxAbs <= 0){
+    hrBpm = null;
+    return [];
+  }
+
+  const thr = 0.4 * maxAbs;
+  const peaks = [];
+  const refractory = Math.floor(0.3 * FS_RESAMP_HZ);
+  let lastPeak = -refractory - 1;
+
+  for (let i=1;i<sig.length-1;i++){
+    if (sig[i] > thr && sig[i] >= sig[i-1] && sig[i] >= sig[i+1]){
+      if ((i - lastPeak) >= refractory){
+        peaks.push(i);
+        lastPeak = i;
+      }
+    }
+  }
+
+  if (peaks.length < 2){
+    hrBpm = null;
+    return peaks;
+  }
+
+  // RR from peak times
+  const rr = [];
+  for (let i=1;i<peaks.length;i++){
+    const dt = t[peaks[i]] - t[peaks[i-1]];
+    if (dt > 0.3 && dt < 2.5) rr.push(dt);
+  }
+  if (rr.length === 0){
+    hrBpm = null;
+    return peaks;
+  }
+
+  rr.sort((a,b)=>a-b);
+  const rrMed = rr[Math.floor(rr.length/2)];
+  hrBpm = rrMed > 0 ? (60.0 / rrMed) : null;
+
+  return peaks;
+}
+
+/* ================== Plot (Canvas) ================== */
+const canvas = document.getElementById("plot");
+const ctx = canvas.getContext("2d");
+
+function resizeCanvas(){
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.floor(rect.width * dpr);
+  canvas.height = Math.floor(rect.height * dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+function drawPlot(t, y, peaksIdx){
+  const w = canvas.getBoundingClientRect().width;
+  const h = canvas.getBoundingClientRect().height;
+
+  ctx.clearRect(0,0,w,h);
+
+  // margins for labels (simple but clean)
+  const left = 46;
+  const right = 12;
+  const top = 12;
+  const bottom = 28;
+
+  const plotW = w - left - right;
+  const plotH = h - top - bottom;
+
+  // background
+  ctx.fillStyle = "#020817";
+  ctx.fillRect(0,0,w,h);
+
+  // axis labels (no numeric ticks, like your PyQt)
+  ctx.fillStyle = "#E0E8FF";
+  ctx.font = "12px system-ui";
+  ctx.save();
+  ctx.translate(14, top + plotH/2);
+  ctx.rotate(-Math.PI/2);
+  ctx.textAlign = "center";
+  ctx.fillText("ECG", 0, 0);
+  ctx.restore();
+
+  ctx.textAlign = "center";
+  ctx.fillText("Time (s)", left + plotW/2, h - 8);
+
+  if (!t || !y || y.length < 2) return;
+
+  // dynamic y-range 3×
+  let vmin = Infinity, vmax = -Infinity;
+  for (let i=0;i<y.length;i++){
+    if (y[i] < vmin) vmin = y[i];
+    if (y[i] > vmax) vmax = y[i];
+  }
+  let center = 0.5*(vmin+vmax);
+  let halfRange = 0.5*(vmax-vmin);
+  halfRange *= 3.0;
+  if (halfRange < 1e-6) halfRange = 1.0;
+
+  const yLow = center - halfRange;
+  const yHigh = center + halfRange;
+
+  const xMin = 0.0, xMax = WINDOW_SEC;
+
+  function xPix(x){ return left + (x - xMin) * (plotW / (xMax - xMin)); }
+  function yPix(v){ return top + (yHigh - v) * (plotH / (yHigh - yLow)); }
+
+  // curve
+  ctx.strokeStyle = "#F5F5F5";
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  for (let i=0;i<y.length;i++){
+    const xp = xPix(t[i]);
+    const yp = yPix(y[i]);
+    if (i===0) ctx.moveTo(xp, yp);
+    else ctx.lineTo(xp, yp);
+  }
+  ctx.stroke();
+
+  // peaks (red circles)
+  if (peaksIdx && peaksIdx.length){
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "#FF5252";
+    ctx.fillStyle = "#FFCDD2";
+
+    for (const i of peaksIdx){
+      const xp = xPix(t[i]);
+      const yp = yPix(y[i]);
+      ctx.beginPath();
+      ctx.arc(xp, yp, 4, 0, Math.PI*2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+}
+
+/* ================== Resample window + update loop ================== */
+function updateLoop(){
+  updateHud();
+
+  if (fsEst === null || calibrating) {
+    // still show empty plot
+    drawPlot(null, null, null);
+    return;
+  }
+
+  const n = Math.min(idxRaw.length, ecgRaw.length);
+  if (n < 2){
+    drawPlot(null, null, null);
+    return;
+  }
+
+  const fsRaw = fsEst;
+  const idx = idxRaw.slice(-n);
+  const yRaw = ecgRaw.slice(-n);
+
+  // time relative to last sample: (idx - idx_last)/fs
+  const idxLast = idx[idx.length-1];
+  const tRaw = new Array(idx.length);
+  for (let i=0;i<idx.length;i++){
+    tRaw[i] = (idx[i] - idxLast) / fsRaw; // negative to 0
+  }
+
+  // keep only last WINDOW_SEC
+  const tMin = -WINDOW_SEC;
+  let start = 0;
+  while (start < tRaw.length && tRaw[start] < tMin) start++;
+  if ((tRaw.length - start) < 2){
+    drawPlot(null, null, null);
+    return;
+  }
+
+  const tWindow = tRaw.slice(start);      // from >= -WINDOW_SEC to 0
+  const yWindow = yRaw.slice(start);
+
+  // shift to start at 0
+  const t0 = tWindow[0];
+  const tShift = tWindow.map(v => v - t0); // 0..~WINDOW_SEC
+
+  // resample to fixed FS_RESAMP_HZ on [0, WINDOW_SEC)
+  const nDs = Math.max(2, Math.floor(WINDOW_SEC * FS_RESAMP_HZ));
+  const tDs = new Array(nDs);
+  for (let i=0;i<nDs;i++){
+    tDs[i] = i / FS_RESAMP_HZ;
+  }
+
+  // linear interp
+  const yDs = new Array(nDs);
+  let j = 0;
+  for (let i=0;i<nDs;i++){
+    const x = tDs[i];
+
+    while (j < tShift.length-2 && tShift[j+1] < x) j++;
+
+    const x0 = tShift[j];
+    const x1 = tShift[j+1];
+    const y0 = yWindow[j];
+    const y1 = yWindow[j+1];
+
+    let yi = y0;
+    if (x1 > x0){
+      const a = (x - x0) / (x1 - x0);
+      yi = y0 + a*(y1 - y0);
+    }
+
+    yDs[i] = yi * flipSign;
+  }
+
+  const peaks = updateHrAndPeaks(tDs, yDs);
+  drawPlot(tDs, yDs, peaks);
+}
+
+setInterval(updateLoop, UPDATE_MS);
+
+/* ================== Recording (buffer + download CSV) ================== */
+async function startRecording(){
+  if (!streaming){
+    setStatus("Start streaming before recording");
+    return false;
+  }
+  recording = true;
+  recIdxRaw = [];
+  recEcgRaw = [];
+  recBattRaw = [];
+  setStatus("Recording (buffering, resample on stop)");
+  return true;
+}
+
+function zohResample(vals, tRaw, tDs){
+  if (!vals.length) return new Array(tDs.length).fill(0);
+  const out = new Array(tDs.length);
+  let j = 0;
+  for (let i=0;i<tDs.length;i++){
+    const x = tDs[i];
+    while (j < tRaw.length-1 && tRaw[j+1] <= x) j++;
+    out[i] = vals[j];
+  }
+  return out;
+}
+
+async function stopRecordingAndSave(){
+  recording = false;
+
+  const nRaw = recIdxRaw.length;
+  if (nRaw < 2){
+    setStatus("Recording stopped (no samples)");
+    return;
+  }
+
+  const fsOrig = (fsEst && fsEst > 0) ? fsEst : FS_RESAMP_HZ;
+
+  // raw time vector
+  const idx0 = recIdxRaw[0];
+  const tRaw = recIdxRaw.map(i => (i - idx0) / fsOrig);
+  const tEnd = tRaw[tRaw.length-1];
+
+  const dtOut = 1.0 / FS_RESAMP_HZ;
+  let nOut = Math.floor(tEnd * FS_RESAMP_HZ);
+  if (nOut < 1) nOut = 1;
+
+  const tDs = new Array(nOut);
+  for (let i=0;i<nOut;i++){
+    tDs[i] = i * dtOut;
+  }
+
+  // ECG: linear interp
+  const ecgVals = recEcgRaw.map(v => v * 1.0); // float
+  const ecgOut = new Array(nOut);
+
+  let j = 0;
+  for (let i=0;i<nOut;i++){
+    const x = tDs[i];
+    while (j < tRaw.length-2 && tRaw[j+1] < x) j++;
+
+    const x0 = tRaw[j], x1 = tRaw[j+1];
+    const y0 = ecgVals[j], y1 = ecgVals[j+1];
+
+    let yi = y0;
+    if (x1 > x0){
+      const a = (x - x0) / (x1 - x0);
+      yi = y0 + a*(y1 - y0);
+    }
+    ecgOut[i] = yi * flipSign; // save with flip applied
+  }
+
+  // Battery: ZOH
+  const battOut = zohResample(recBattRaw, tRaw, tDs);
+
+  // build CSV text
+  const lines = [];
+  lines.push("# TinZr ECG Recording (resampled to fixed Fs)");
+  lines.push("# DateTime: " + new Date().toISOString());
+  lines.push("# Fs_orig_Hz: " + fsOrig.toFixed(6));
+  lines.push("# Fs_out_Hz: " + FS_RESAMP_HZ.toFixed(6));
+  lines.push("# N_raw: " + nRaw);
+  lines.push("# N_out: " + nOut);
+  lines.push("# Columns: time_s, ecg, batt_pct");
+  lines.push("time_s,ecg,batt_pct");
+
+  for (let i=0;i<nOut;i++){
+    lines.push(`${tDs[i].toFixed(6)},${ecgOut[i].toFixed(6)},${Number(battOut[i]).toFixed(2)}`);
+  }
+
+  const blob = new Blob([lines.join("\n")], {type: "text/csv;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "tinzr_ecg_120Hz.csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  URL.revokeObjectURL(url);
+
+  setStatus("Recording saved (downloaded CSV)");
+}
+
+tglRecord.addEventListener("click", async () => {
+  const wantOn = !getToggle(tglRecord);
+
+  if (wantOn){
+    const ok = await startRecording();
+    setToggle(tglRecord, !!ok);
+  }else{
+    setToggle(tglRecord, false);
+    await stopRecordingAndSave();
+  }
+  enableControls();
+});
+
+/* ================== init ================== */
+setToggle(tglConnect, false);
+setToggle(tglStream, false);
+setToggle(tglRecord, false);
+enableControls();
+updateHud();
+setStatus(webBleAvailable() ? "Idle" : "Web Bluetooth not available");
 </script>
 </body>
 </html>
