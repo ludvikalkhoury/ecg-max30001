@@ -250,6 +250,8 @@
 
     <!-- ✅ NEW: iPhone-safe "open image" button -->
     <button class="btn saveBtn" id="btnOpenImage">Open Saved Image</button>
+    <img id="imgPreview" style="display:none; width:100%; margin-top:10px; border-radius:12px; border:1px solid rgba(255,255,255,0.12);" alt="Saved ECG image preview"/>
+
   </div>
 
   <div class="plotWrap">
@@ -317,6 +319,7 @@ let recordStopTimer = null;
 
 /* ✅ NEW: store latest image as blob URL (iPhone requires user tap to open) */
 let lastImageUrl = null;
+let lastImageDataUrl = null;
 
 /* ================== UI ================== */
 const btnFind = document.getElementById("btnFind");
@@ -329,7 +332,8 @@ const btnBatt = document.getElementById("btnBatt");
 const statusEl = document.getElementById("status");
 const hudEl = document.getElementById("hud");
 const btnOpenImage = document.getElementById("btnOpenImage");
-
+const imgPreview = document.getElementById("imgPreview");
+  
 function setStatus(s){ statusEl.textContent = "Status: " + s; }
 
 function setToggle(el, on){
@@ -375,13 +379,31 @@ function updateHud(){
 
 /* ✅ NEW: open image only on user tap (iOS requirement) */
 btnOpenImage.addEventListener("click", () => {
-  if (!lastImageUrl){
+  if (!lastImageDataUrl){
     setStatus("No saved image yet");
     return;
   }
-  // Use same tab (more reliable in Bluefy than popup)
-  window.location.href = lastImageUrl;
+
+  // ✅ data: URLs are the most compatible on iOS
+  const w = window.open();
+  if (w){
+    w.document.open();
+    w.document.write(`
+      <html><head><meta name="viewport" content="width=device-width, initial-scale=1"/></head>
+      <body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+        <img src="${lastImageDataUrl}" style="max-width:100%;height:auto;"/>
+      </body></html>
+    `);
+    w.document.close();
+    setStatus("Image opened. Use Share → Save Image (or long-press).");
+  } else {
+    // Popup blocked: show preview + instruct long-press
+    setStatus("Preview shown below. Long-press the image → Save Image.");
+    imgPreview.style.display = "block";
+    imgPreview.src = lastImageDataUrl;
+  }
 });
+
 
 /* ================== BLE: SELECT DEVICE ================== */
 btnFind.addEventListener("click", async () => {
@@ -418,6 +440,12 @@ btnFind.addEventListener("click", async () => {
       setToggle(tglConnect, false);
       setToggle(tglStream, false);
       setToggle(tglRecord, false);
+
+      btnOpenImage.style.display = "none";
+      imgPreview.style.display = "none";
+      imgPreview.src = "";
+      lastImageDataUrl = null;
+      
       setStatus("Disconnected");
       enableControls();
     });
@@ -537,7 +565,11 @@ async function startStreaming(){
     hrBpm = null;
     updateHud();
 
-    btnOpenImage.style.display = "none";  // hide until next save
+    btnOpenImage.style.display = "none";
+    imgPreview.style.display = "none";
+    imgPreview.src = "";
+    lastImageDataUrl = null;
+
 
     await writeCmd(CMD_START);
 
@@ -1035,18 +1067,21 @@ function stopRecordingAndSaveImage(){
   c.stroke();
 
   out.toBlob(blob => {
-    // cleanup old url
-    if (lastImageUrl){
-      try { URL.revokeObjectURL(lastImageUrl); } catch(_) {}
-      lastImageUrl = null;
-    }
+  // Convert blob -> dataURL (most compatible for iOS open/save flows)
+  const reader = new FileReader();
+  reader.onload = () => {
+    lastImageDataUrl = reader.result;
 
-    lastImageUrl = URL.createObjectURL(blob);
-
-    // show open button
+    // show button + preview (preview helps when popups are blocked)
     btnOpenImage.style.display = "block";
-    setStatus("Image ready. Tap 'Open Saved Image' → Share → Save Image.");
-  }, "image/png");
+    imgPreview.style.display = "block";
+    imgPreview.src = lastImageDataUrl;
+
+    setStatus("Image ready. Tap 'Open Saved Image' or long-press preview → Save Image.");
+  };
+  reader.readAsDataURL(blob);
+}, "image/png");
+
 }
 
 /* Record toggle wiring */
@@ -1072,3 +1107,4 @@ enableControls();
 </script>
 </body>
 </html>
+
