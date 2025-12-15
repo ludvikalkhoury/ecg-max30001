@@ -162,19 +162,6 @@
     white-space:nowrap;
   }
 
-  /* ✅ NEW: appears only after recording finishes */
-  .saveBtn{
-    display:none;
-    margin-top:10px;
-    width:100%;
-    border:1px solid rgba(90,167,255,0.45);
-    background: rgba(90,167,255,0.18);
-    color: #E3F2FD;
-    padding:14px 14px;
-    border-radius: 12px;
-    font-weight: 1000;
-  }
-
   .plotWrap{
     position:relative;
     flex:1;
@@ -248,11 +235,10 @@
       <div class="status" id="status">Status: Idle</div>
     </div>
 
-    <!-- ✅ NEW: iPhone-safe "open image" button -->
+    <!-- Saved image preview (long-press to Save Image) -->
     <img id="imgPreview"
-     style="display:none; width:100%; margin-top:10px; border-radius:12px; border:1px solid rgba(255,255,255,0.12);"
-     alt="Saved ECG image preview"/>
-
+         style="display:none; width:100%; margin-top:10px; border-radius:12px; border:1px solid rgba(255,255,255,0.12);"
+         alt="Saved ECG image preview"/>
   </div>
 
   <div class="plotWrap">
@@ -261,7 +247,7 @@
   </div>
 
   <div class="foot">
-    iPhone: Bluefy/WebBLE requires user tap to open/save files. Use the button after recording.
+    iPhone: Long-press the preview image after recording → Save Image.
   </div>
 </div>
 
@@ -276,13 +262,16 @@ const CMD_START = new Uint8Array([ "S".charCodeAt(0) ]);
 const CMD_STOP  = new Uint8Array([ "E".charCodeAt(0) ]);
 const CMD_BATT  = new Uint8Array([ "B".charCodeAt(0), "A".charCodeAt(0), "T".charCodeAt(0) ]);
 
+// Frame: <iB (little-endian int32 + uint8) => 5 bytes
 const FRAME_SIZE = 5;
 
+// Viewer config
 const FS_RESAMP_HZ = 120.0;
 const WINDOW_SEC = 5.0;
 const UPDATE_MS = 10;
 const MAX_RAW_SAMPLES = 40000;
 
+// Record behavior
 const RECORD_DELAY_SEC = 5;
 const RECORD_DURATION_SEC = 30;
 
@@ -295,35 +284,32 @@ let txChar = null;
 let streaming = false;
 let recording = false;
 
-let flipSign = -1.0;
+let flipSign = -1.0; // default matches your Python (Flip button starts pressed)
 let battPct = null;
 let fsEst = null;
 let hrBpm = null;
 
-let byteBuf = [];
+let byteBuf = []; // raw incoming bytes (array of 0..255)
 
 let sampleCount = 0;
 let idxRaw = [];
 let ecgRaw = [];
 
+// Calibration
 let calibStartTime = null;
 let calibStartCount = null;
 const CALIB_SAMPLES = Math.floor(4 * FS_RESAMP_HZ);
 let calibrating = false;
 
+// Recording buffers
 let recIdxRaw = [];
 let recEcgRaw = [];
 let recBattRaw = [];
 
-let recordCountdownTimer = null;
-let recordStopTimer = null;
-
-
-
-
-/* ✅ NEW: store latest image as blob URL (iPhone requires user tap to open) */
-let lastImageUrl = null;
-let lastImageDataUrl = null;
+// Timers
+let recordCountdownTimer = null;   // 5s “starts in…”
+let recordProgressTimer  = null;   // ✅ 30s “xx left”
+let recordStopTimer      = null;   // auto-stop at 30s
 
 /* ================== UI ================== */
 const btnFind = document.getElementById("btnFind");
@@ -336,7 +322,7 @@ const btnBatt = document.getElementById("btnBatt");
 const statusEl = document.getElementById("status");
 const hudEl = document.getElementById("hud");
 const imgPreview = document.getElementById("imgPreview");
-  
+
 function setStatus(s){ statusEl.textContent = "Status: " + s; }
 
 function setToggle(el, on){
@@ -380,12 +366,6 @@ function updateHud(){
   hudEl.textContent = `${fsText}   |   ${hrText}`;
 }
 
-
-  
-
-
-
-
 /* ================== BLE: SELECT DEVICE ================== */
 btnFind.addEventListener("click", async () => {
   if (!webBleAvailable()){
@@ -416,17 +396,16 @@ btnFind.addEventListener("click", async () => {
       gattServer = null;
 
       if (recordCountdownTimer){ clearInterval(recordCountdownTimer); recordCountdownTimer = null; }
+      if (recordProgressTimer){ clearInterval(recordProgressTimer); recordProgressTimer = null; }
       if (recordStopTimer){ clearTimeout(recordStopTimer); recordStopTimer = null; }
 
       setToggle(tglConnect, false);
       setToggle(tglStream, false);
       setToggle(tglRecord, false);
 
-
       imgPreview.style.display = "none";
       imgPreview.src = "";
-      lastImageDataUrl = null;
-      
+
       setStatus("Disconnected");
       enableControls();
     });
@@ -492,6 +471,7 @@ async function disconnectDevice(){
   gattServer = null;
 
   if (recordCountdownTimer){ clearInterval(recordCountdownTimer); recordCountdownTimer = null; }
+  if (recordProgressTimer){ clearInterval(recordProgressTimer); recordProgressTimer = null; }
   if (recordStopTimer){ clearTimeout(recordStopTimer); recordStopTimer = null; }
 
   setStatus("Disconnected");
@@ -546,11 +526,9 @@ async function startStreaming(){
     hrBpm = null;
     updateHud();
 
-
+    // hide old saved preview
     imgPreview.style.display = "none";
     imgPreview.src = "";
-    lastImageDataUrl = null;
-
 
     await writeCmd(CMD_START);
 
@@ -573,12 +551,14 @@ async function stopStreaming(){
 
   streaming = false;
 
+  // stop recording if active
   if (recording){
     stopRecordingAndSaveImage();
     setToggle(tglRecord, false);
   }
 
   if (recordCountdownTimer){ clearInterval(recordCountdownTimer); recordCountdownTimer = null; }
+  if (recordProgressTimer){ clearInterval(recordProgressTimer); recordProgressTimer = null; }
   if (recordStopTimer){ clearTimeout(recordStopTimer); recordStopTimer = null; }
 
   setStatus("Streaming stopped");
@@ -644,6 +624,7 @@ function onNotify(ev){
     );
     const batt_i = byteBuf[off+4];
 
+    // Always update battery even if not streaming
     battPct = batt_i;
     setBatteryText();
 
@@ -660,15 +641,18 @@ function onNotify(ev){
     }
   }
 
+  // drop consumed bytes
   const remaining = byteBuf.length - nFrames * FRAME_SIZE;
   if (remaining > 0) byteBuf = byteBuf.slice(byteBuf.length - remaining);
   else byteBuf = [];
 
+  // cap
   if (idxRaw.length > MAX_RAW_SAMPLES){
     idxRaw = idxRaw.slice(-MAX_RAW_SAMPLES);
     ecgRaw = ecgRaw.slice(-MAX_RAW_SAMPLES);
   }
 
+  // calibration
   if (streaming && fsEst === null){
     if (calibStartTime === null){
       calibStartTime = performance.now() / 1000.0;
@@ -681,9 +665,11 @@ function onNotify(ev){
         if (dt > 0){
           fsEst = nSamp / dt;
 
+          // throw away calibration samples
           idxRaw = [];
           ecgRaw = [];
 
+          // clear any recording buffer
           recIdxRaw = [];
           recEcgRaw = [];
           recBattRaw = [];
@@ -805,6 +791,7 @@ function drawPlot(t, y, peaksIdx){
 
   if (!t || !y || y.length < 2) return;
 
+  // dynamic y-range 3×
   let vmin = Infinity, vmax = -Infinity;
   for (let i=0;i<y.length;i++){
     if (y[i] < vmin) vmin = y[i];
@@ -871,7 +858,7 @@ function updateLoop(){
   const idxLast = idx[idx.length-1];
   const tRaw = new Array(idx.length);
   for (let i=0;i<idx.length;i++){
-    tRaw[i] = (idx[i] - idxLast) / fsRaw;
+    tRaw[i] = (idx[i] - idxLast) / fsRaw; // negative..0
   }
 
   const tMin = -WINDOW_SEC;
@@ -886,7 +873,7 @@ function updateLoop(){
   const yWindow = yRaw.slice(start);
 
   const t0 = tWindow[0];
-  const tShift = tWindow.map(v => v - t0);
+  const tShift = tWindow.map(v => v - t0); // 0..~WINDOW_SEC
 
   const nDs = Math.max(2, Math.floor(WINDOW_SEC * FS_RESAMP_HZ));
   const tDs = new Array(nDs);
@@ -894,6 +881,7 @@ function updateLoop(){
     tDs[i] = i / FS_RESAMP_HZ;
   }
 
+  // linear interp
   const yDs = new Array(nDs);
   let j = 0;
   for (let i=0;i<nDs;i++){
@@ -918,6 +906,12 @@ function updateLoop(){
 }
 setInterval(updateLoop, UPDATE_MS);
 
+/* ================== Recording helpers ================== */
+function formatStamp(d){
+  const pad = (n)=> String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}  ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 /* ================== Record: 5s countdown, 30s capture, save PNG ================== */
 async function startRecordingCountdown(){
   if (!streaming){
@@ -925,16 +919,16 @@ async function startRecordingCountdown(){
     return false;
   }
 
+  // clear timers
   if (recordCountdownTimer){ clearInterval(recordCountdownTimer); recordCountdownTimer = null; }
+  if (recordProgressTimer){ clearInterval(recordProgressTimer); recordProgressTimer = null; }
   if (recordStopTimer){ clearTimeout(recordStopTimer); recordStopTimer = null; }
 
+  // reset buffers
   recIdxRaw = [];
   recEcgRaw = [];
   recBattRaw = [];
   recording = false;
-
-
-  
 
   let remaining = RECORD_DELAY_SEC;
   setStatus(`Recording starts in ${remaining}s`);
@@ -950,54 +944,39 @@ async function startRecordingCountdown(){
     clearInterval(recordCountdownTimer);
     recordCountdownTimer = null;
 
+    // start recording
     recording = true;
 
-// ✅ 30s countdown display
-let recLeft = RECORD_DURATION_SEC;
-setStatus(`Recording... ${recLeft}s left`);
-
-if (recordProgressTimer){
-  clearInterval(recordProgressTimer);
-  recordProgressTimer = null;
-}
-recordProgressTimer = setInterval(() => {
-  recLeft -= 1;
-  if (recLeft > 0){
+    // 30s countdown
+    let recLeft = RECORD_DURATION_SEC;
     setStatus(`Recording... ${recLeft}s left`);
-  } else {
-    clearInterval(recordProgressTimer);
-    recordProgressTimer = null;
-  }
-}, 1000);
 
-// Auto-stop
-recordStopTimer = setTimeout(() => {
-  stopRecordingAndSaveImage();
-  setToggle(tglRecord, false);
-  enableControls();
-}, RECORD_DURATION_SEC * 1000);
+    recordProgressTimer = setInterval(() => {
+      recLeft -= 1;
+      if (recLeft > 0){
+        setStatus(`Recording... ${recLeft}s left`);
+      } else {
+        clearInterval(recordProgressTimer);
+        recordProgressTimer = null;
+      }
+    }, 1000);
 
+    // auto-stop
+    recordStopTimer = setTimeout(() => {
+      stopRecordingAndSaveImage();
+      setToggle(tglRecord, false);
+      enableControls();
+    }, RECORD_DURATION_SEC * 1000);
 
   }, 1000);
 
   return true;
 }
 
-
-function formatStamp(d){
-  const pad = (n)=> String(n).padStart(2,"0");
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}  ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-  
 function stopRecordingAndSaveImage(){
-  if (recordProgressTimer){
-  clearInterval(recordProgressTimer);
-  recordProgressTimer = null;
-}
-
-  
+  // stop timers
   if (recordCountdownTimer){ clearInterval(recordCountdownTimer); recordCountdownTimer = null; }
+  if (recordProgressTimer){ clearInterval(recordProgressTimer); recordProgressTimer = null; }
   if (recordStopTimer){ clearTimeout(recordStopTimer); recordStopTimer = null; }
 
   if (!recording){
@@ -1015,6 +994,7 @@ function stopRecordingAndSaveImage(){
 
   setStatus("Preparing image…");
 
+  // wide image
   const widthPerSecond = 220;
   const width = Math.max(1400, Math.floor(widthPerSecond * RECORD_DURATION_SEC));
   const height = 420;
@@ -1024,9 +1004,11 @@ function stopRecordingAndSaveImage(){
   out.height = height;
   const c = out.getContext("2d");
 
+  // background
   c.fillStyle = "#020817";
   c.fillRect(0, 0, width, height);
 
+  // header text
   c.fillStyle = "#E3F2FD";
   c.font = "18px system-ui";
   c.fillText("TinZr ECG – 30s Recording", 16, 28);
@@ -1039,11 +1021,12 @@ function stopRecordingAndSaveImage(){
   const stamp = formatStamp(new Date());
   c.fillText(`Date: ${stamp}`, 16, 68);
 
-
+  // plot area
   const left = 40, right = 16, top = 88, bottom = 30;
   const plotW = width - left - right;
   const plotH = height - top - bottom;
 
+  // scaling (3× range)
   let vmin = Infinity, vmax = -Infinity;
   for (let i=0;i<n;i++){
     const v = recEcgRaw[i] * flipSign;
@@ -1060,6 +1043,7 @@ function stopRecordingAndSaveImage(){
   function xPix(i){ return left + (i / (n-1)) * plotW; }
   function yPix(v){ return top + (yHigh - v) * (plotH / (yHigh - yLow)); }
 
+  // axis labels
   c.fillStyle = "#E0E8FF";
   c.font = "14px system-ui";
   c.save();
@@ -1072,6 +1056,7 @@ function stopRecordingAndSaveImage(){
   c.textAlign = "center";
   c.fillText("Time (s)", left + plotW/2, height - 10);
 
+  // trace
   c.strokeStyle = "#F5F5F5";
   c.lineWidth = 1.6;
   c.beginPath();
@@ -1084,17 +1069,16 @@ function stopRecordingAndSaveImage(){
   }
   c.stroke();
 
+  // export to preview (iPhone: long-press → Save Image)
   out.toBlob(blob => {
-  const reader = new FileReader();
-  reader.onload = () => {
-    imgPreview.src = reader.result;
-    imgPreview.style.display = "block";
-    setStatus("Image ready. Long-press the preview below → Save Image.");
-  };
-  reader.readAsDataURL(blob);
-}, "image/png");
-
-
+    const reader = new FileReader();
+    reader.onload = () => {
+      imgPreview.src = reader.result;
+      imgPreview.style.display = "block";
+      setStatus("Image ready. Long-press the preview below → Save Image.");
+    };
+    reader.readAsDataURL(blob);
+  }, "image/png");
 }
 
 /* Record toggle wiring */
@@ -1106,12 +1090,12 @@ tglRecord.addEventListener("click", async () => {
     setToggle(tglRecord, !!ok);
   }else{
     setToggle(tglRecord, false);
-    stopRecordingAndSaveImage();
+    stopRecordingAndSaveImage(); // stop early
   }
   enableControls();
 });
 
-/* init */
+/* ================== Init toggles ================== */
 setToggle(tglConnect, false);
 setToggle(tglStream, false);
 setToggle(tglRecord, false);
@@ -1120,8 +1104,3 @@ enableControls();
 </script>
 </body>
 </html>
-
-
-
-
-
