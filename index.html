@@ -249,8 +249,9 @@
     </div>
 
     <!-- ✅ NEW: iPhone-safe "open image" button -->
-    <button class="btn saveBtn" id="btnOpenImage">Open Saved Image</button>
-    <img id="imgPreview" style="display:none; width:100%; margin-top:10px; border-radius:12px; border:1px solid rgba(255,255,255,0.12);" alt="Saved ECG image preview"/>
+    <img id="imgPreview"
+     style="display:none; width:100%; margin-top:10px; border-radius:12px; border:1px solid rgba(255,255,255,0.12);"
+     alt="Saved ECG image preview"/>
 
   </div>
 
@@ -331,7 +332,6 @@ const btnFlip = document.getElementById("btnFlip");
 const btnBatt = document.getElementById("btnBatt");
 const statusEl = document.getElementById("status");
 const hudEl = document.getElementById("hud");
-const btnOpenImage = document.getElementById("btnOpenImage");
 const imgPreview = document.getElementById("imgPreview");
   
 function setStatus(s){ statusEl.textContent = "Status: " + s; }
@@ -377,16 +377,8 @@ function updateHud(){
   hudEl.textContent = `${fsText}   |   ${hrText}`;
 }
 
-/* ✅ NEW: open image only on user tap (iOS requirement) */
-btnOpenImage.addEventListener("click", () => {
-  if (!lastImageDataUrl){
-    setStatus("No saved image yet");
-    return;
-  }
-  imgPreview.style.display = "block";
-  imgPreview.src = lastImageDataUrl;
-  setStatus("Long-press the image below → Save Image.");
-});
+
+  
 
 
 
@@ -427,7 +419,7 @@ btnFind.addEventListener("click", async () => {
       setToggle(tglStream, false);
       setToggle(tglRecord, false);
 
-      btnOpenImage.style.display = "none";
+
       imgPreview.style.display = "none";
       imgPreview.src = "";
       lastImageDataUrl = null;
@@ -551,7 +543,7 @@ async function startStreaming(){
     hrBpm = null;
     updateHud();
 
-    btnOpenImage.style.display = "none";
+
     imgPreview.style.display = "none";
     imgPreview.src = "";
     lastImageDataUrl = null;
@@ -938,7 +930,8 @@ async function startRecordingCountdown(){
   recBattRaw = [];
   recording = false;
 
-  btnOpenImage.style.display = "none";
+
+  
 
   let remaining = RECORD_DELAY_SEC;
   setStatus(`Recording starts in ${remaining}s`);
@@ -968,6 +961,13 @@ async function startRecordingCountdown(){
   return true;
 }
 
+
+function formatStamp(d){
+  const pad = (n)=> String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}  ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+  
 function stopRecordingAndSaveImage(){
   if (recordCountdownTimer){ clearInterval(recordCountdownTimer); recordCountdownTimer = null; }
   if (recordStopTimer){ clearTimeout(recordStopTimer); recordStopTimer = null; }
@@ -1008,7 +1008,11 @@ function stopRecordingAndSaveImage(){
   const fsText = (fsEst && fsEst > 0) ? `Fs_in≈${fsEst.toFixed(1)} Hz` : "Fs_in≈-- Hz";
   c.fillText(`${fsText}   |   ${battText}`, 16, 50);
 
-  const left = 40, right = 16, top = 70, bottom = 30;
+  const stamp = formatStamp(new Date());
+  c.fillText(`Date: ${stamp}`, 16, 68);
+
+
+  const left = 40, right = 16, top = 88, bottom = 30;
   const plotW = width - left - right;
   const plotH = height - top - bottom;
 
@@ -1053,20 +1057,15 @@ function stopRecordingAndSaveImage(){
   c.stroke();
 
   out.toBlob(blob => {
-  // Convert blob -> dataURL (most compatible for iOS open/save flows)
   const reader = new FileReader();
   reader.onload = () => {
-    lastImageDataUrl = reader.result;
-
-    // show button + preview (preview helps when popups are blocked)
-    btnOpenImage.style.display = "block";
+    imgPreview.src = reader.result;
     imgPreview.style.display = "block";
-    imgPreview.src = lastImageDataUrl;
-
-    setStatus("Image ready. Tap 'Open Saved Image' or long-press preview → Save Image.");
+    setStatus("Image ready. Long-press the preview below → Save Image.");
   };
   reader.readAsDataURL(blob);
 }, "image/png");
+
 
 }
 
@@ -1093,6 +1092,7 @@ enableControls();
 </script>
 </body>
 </html>
+
 
 
 
