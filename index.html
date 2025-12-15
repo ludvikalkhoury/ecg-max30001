@@ -2,8 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
 <title>TinZr ECG Viewer (Web)</title>
+
+<!-- iPhone “app-like” behavior when added to Home Screen -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#020817">
+
 <style>
   :root{
     --bg:#020817;
@@ -18,18 +24,21 @@
     --border: rgba(255,255,255,0.10);
   }
   html,body{height:100%; margin:0; background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;}
+
+  /* ===== Responsive iPhone-first container ===== */
   .app{
-  width: min(600px, calc(100vw - 24px));
-  height: calc(100vh - 24px);
-  margin: 12px auto;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: calc(12px + env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom)) 16px;
-  background: transparent;
-  border-radius: 16px;
-}
+    width: min(600px, calc(100vw - 24px));
+    height: calc(100vh - 24px);
+    margin: 12px auto;
+    box-sizing:border-box;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    padding: calc(12px + env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom)) 16px;
+    background: transparent;
+    border-radius: 16px;
+  }
+
   .header{
     display:flex;
     align-items:center;
@@ -51,22 +60,25 @@
     border:1px solid var(--border);
     background: rgba(255,255,255,0.04);
     color: var(--text);
-    padding:8px 10px;
+    padding:10px 12px;
     border-radius: 12px;
-    font-weight: 700;
+    font-weight: 800;
   }
+
   .panel{
     background: rgba(255,255,255,0.02);
     border: 1px solid var(--border);
     border-radius: 16px;
     padding: 10px;
   }
+
   .grid{
     display:grid;
     grid-template-columns: 160px 1fr;
     gap:10px;
     align-items:center;
   }
+
   .row2{
     display:grid;
     grid-template-columns: 1fr 1fr 1fr;
@@ -74,53 +86,59 @@
     align-items:center;
     margin-top:10px;
   }
+
   .btn{
     cursor:pointer;
     border:1px solid var(--border);
     background: rgba(255,255,255,0.05);
     color: var(--text);
-    padding:10px 12px;
+    padding:12px 14px;
     border-radius: 12px;
-    font-weight: 800;
+    font-weight: 900;
+    -webkit-tap-highlight-color: transparent;
   }
   .btn:disabled{ opacity:0.5; cursor:not-allowed; }
+
   .selectLike{
     width:100%;
     border:1px solid var(--border);
     background: rgba(0,0,0,0.22);
     color: var(--text);
-    padding:10px 12px;
+    padding:12px 14px;
     border-radius: 12px;
     box-sizing:border-box;
     overflow:hidden;
     text-overflow:ellipsis;
     white-space:nowrap;
   }
+
   .toggleWrap{
     display:flex; align-items:center; justify-content:space-between;
     border:1px solid var(--border);
     background: rgba(0,0,0,0.16);
-    padding:10px 12px;
+    padding:12px 14px;
     border-radius: 12px;
   }
-  .toggleWrap span{color:var(--text); font-weight:800;}
+  .toggleWrap span{color:var(--text); font-weight:900;}
+
   .toggle{
-    width:46px; height:26px;
+    width:50px; height:28px;
     border-radius: 999px;
     background: rgba(255,255,255,0.12);
     border:1px solid var(--border);
     position:relative;
     cursor:pointer;
     flex: 0 0 auto;
+    -webkit-tap-highlight-color: transparent;
   }
   .knob{
     position:absolute; top:3px; left:3px;
-    width:20px; height:20px; border-radius:999px;
+    width:22px; height:22px; border-radius:999px;
     background: rgba(255,255,255,0.85);
     transition: transform 120ms ease;
   }
   .toggle.on{ background: rgba(90,167,255,0.35); }
-  .toggle.on .knob{ transform: translateX(20px); background: rgba(255,255,255,0.95); }
+  .toggle.on .knob{ transform: translateX(22px); background: rgba(255,255,255,0.95); }
 
   .statusRow{
     display:flex; align-items:center; gap:10px; margin-top:10px;
@@ -130,9 +148,9 @@
     border:1px solid var(--border);
     background: rgba(0,0,0,0.16);
     border-radius: 12px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     color: var(--text);
-    font-weight: 700;
+    font-weight: 800;
   }
 
   .plotWrap{
@@ -142,8 +160,10 @@
     border:1px solid var(--border);
     border-radius: 16px;
     overflow:hidden;
+    min-height: 180px;
   }
   canvas{ display:block; width:100%; height:100%; }
+
   .hud{
     position:absolute; right:10px; top:10px;
     background: var(--pill);
@@ -154,14 +174,25 @@
     pointer-events:none;
     white-space:nowrap;
   }
+
   .foot{
     font-size: 12px;
     color: var(--muted);
     margin-top:4px;
     line-height:1.3;
   }
+
+  /* ===== iPhone 14-ish breakpoint (390px wide portrait) ===== */
+  @media (max-width: 430px){
+    .grid{ grid-template-columns: 1fr; }
+    .row2{ grid-template-columns: 1fr; gap: 10px; }
+    .statusRow{ flex-direction: column; align-items: stretch; }
+    .btn, .selectLike, .toggleWrap, .status, .battBtn{ width: 100%; }
+    .hud{ right: 8px; top: 8px; }
+  }
 </style>
 </head>
+
 <body>
 <div class="app">
   <div class="header">
@@ -330,7 +361,6 @@ btnFind.addEventListener("click", async () => {
 
     // Handle unexpected disconnects
     bleDevice.addEventListener("gattserverdisconnected", () => {
-      // Stop everything cleanly
       streaming = false;
       recording = false;
       rxChar = null;
@@ -387,7 +417,6 @@ async function disconnectDevice(){
         await txChar.stopNotifications();
       }catch(_){}
     }
-    // stop stream command if needed
     if (streaming){
       await stopStreaming();
     }
@@ -414,13 +443,8 @@ tglConnect.addEventListener("click", async () => {
 
   if (wantOn){
     const ok = await connectDevice();
-    if (ok){
-      setToggle(tglConnect, true);
-    }else{
-      setToggle(tglConnect, false);
-    }
+    setToggle(tglConnect, !!ok);
   }else{
-    // user turned off connect
     setToggle(tglConnect, false);
     setToggle(tglStream, false);
     setToggle(tglRecord, false);
@@ -443,7 +467,6 @@ async function startStreaming(){
   }
 
   try{
-    // Reset buffers
     streaming = false;
     byteBuf = [];
 
@@ -456,7 +479,6 @@ async function startStreaming(){
     calibStartCount = null;
     calibrating = true;
 
-    // Reset recording buffers too (matches your Python)
     recIdxRaw = [];
     recEcgRaw = [];
     recBattRaw = [];
@@ -482,9 +504,7 @@ async function startStreaming(){
 async function stopStreaming(){
   if (!streaming) return;
 
-  try{
-    await writeCmd(CMD_STOP);
-  }catch(_){}
+  try{ await writeCmd(CMD_STOP); }catch(_){}
 
   streaming = false;
 
@@ -530,26 +550,22 @@ btnFlip.addEventListener("click", () => {
   const next = !pressed;
   btnFlip.setAttribute("aria-pressed", next ? "true" : "false");
 
-  // In your Python: checked => flip_sign=-1 else +1
+  // checked => flip=-1, unchecked => +1
   flipSign = next ? -1.0 : 1.0;
 
-  // Keep visual label stable
   btnFlip.textContent = "Flip ECG";
 });
 
 /* ================== BLE notifications parsing: <iB ================== */
 function readInt32LE(b0,b1,b2,b3){
-  // Convert 4 bytes to signed int32 little-endian
   const u = (b0) | (b1<<8) | (b2<<16) | (b3<<24);
   return u | 0;
 }
 
 function onNotify(ev){
-  const dv = ev.target.value; // DataView
+  const dv = ev.target.value;
   const n = dv.byteLength;
-  for (let i=0; i<n; i++){
-    byteBuf.push(dv.getUint8(i));
-  }
+  for (let i=0; i<n; i++) byteBuf.push(dv.getUint8(i));
 
   const nFrames = Math.floor(byteBuf.length / FRAME_SIZE);
   if (nFrames <= 0) return;
@@ -558,7 +574,6 @@ function onNotify(ev){
     const off = f * FRAME_SIZE;
     const ecg_i = readInt32LE(byteBuf[off+0], byteBuf[off+1], byteBuf[off+2], byteBuf[off+3]);
     const batt_i = byteBuf[off+4];
-
     battPct = batt_i;
 
     if (!streaming) continue;
@@ -574,21 +589,15 @@ function onNotify(ev){
     }
   }
 
-  // drop consumed bytes
   const remaining = byteBuf.length - nFrames * FRAME_SIZE;
-  if (remaining > 0){
-    byteBuf = byteBuf.slice(byteBuf.length - remaining);
-  }else{
-    byteBuf = [];
-  }
+  if (remaining > 0) byteBuf = byteBuf.slice(byteBuf.length - remaining);
+  else byteBuf = [];
 
-  // cap plot buffers
   if (idxRaw.length > MAX_RAW_SAMPLES){
     idxRaw = idxRaw.slice(-MAX_RAW_SAMPLES);
     ecgRaw = ecgRaw.slice(-MAX_RAW_SAMPLES);
   }
 
-  // Fs calibration (same idea as your Python)
   if (streaming && fsEst === null){
     if (calibStartTime === null){
       calibStartTime = performance.now() / 1000.0;
@@ -601,7 +610,6 @@ function onNotify(ev){
         if (dt > 0){
           fsEst = nSamp / dt;
 
-          // throw away calibration samples (matches your Python)
           idxRaw = [];
           ecgRaw = [];
 
@@ -621,14 +629,13 @@ function onNotify(ev){
   }
 }
 
-/* ================== HR + peaks (same logic style as your Python) ================== */
+/* ================== HR + peaks ================== */
 function updateHrAndPeaks(t, y){
   if (!t || !y || y.length < 10){
     hrBpm = null;
     return [];
   }
 
-  // center
   let mean = 0;
   for (let i=0;i<y.length;i++) mean += y[i];
   mean /= y.length;
@@ -664,7 +671,6 @@ function updateHrAndPeaks(t, y){
     return peaks;
   }
 
-  // RR from peak times
   const rr = [];
   for (let i=1;i<peaks.length;i++){
     const dt = t[peaks[i]] - t[peaks[i-1]];
@@ -702,7 +708,6 @@ function drawPlot(t, y, peaksIdx){
 
   ctx.clearRect(0,0,w,h);
 
-  // margins for labels (simple but clean)
   const left = 46;
   const right = 12;
   const top = 12;
@@ -711,13 +716,12 @@ function drawPlot(t, y, peaksIdx){
   const plotW = w - left - right;
   const plotH = h - top - bottom;
 
-  // background
   ctx.fillStyle = "#020817";
   ctx.fillRect(0,0,w,h);
 
-  // axis labels (no numeric ticks, like your PyQt)
   ctx.fillStyle = "#E0E8FF";
   ctx.font = "12px system-ui";
+
   ctx.save();
   ctx.translate(14, top + plotH/2);
   ctx.rotate(-Math.PI/2);
@@ -730,7 +734,6 @@ function drawPlot(t, y, peaksIdx){
 
   if (!t || !y || y.length < 2) return;
 
-  // dynamic y-range 3×
   let vmin = Infinity, vmax = -Infinity;
   for (let i=0;i<y.length;i++){
     if (y[i] < vmin) vmin = y[i];
@@ -749,7 +752,6 @@ function drawPlot(t, y, peaksIdx){
   function xPix(x){ return left + (x - xMin) * (plotW / (xMax - xMin)); }
   function yPix(v){ return top + (yHigh - v) * (plotH / (yHigh - yLow)); }
 
-  // curve
   ctx.strokeStyle = "#F5F5F5";
   ctx.lineWidth = 1.4;
   ctx.beginPath();
@@ -761,7 +763,6 @@ function drawPlot(t, y, peaksIdx){
   }
   ctx.stroke();
 
-  // peaks (red circles)
   if (peaksIdx && peaksIdx.length){
     ctx.lineWidth = 1.5;
     ctx.strokeStyle = "#FF5252";
@@ -778,12 +779,11 @@ function drawPlot(t, y, peaksIdx){
   }
 }
 
-/* ================== Resample window + update loop ================== */
+/* ================== Resample + update loop ================== */
 function updateLoop(){
   updateHud();
 
   if (fsEst === null || calibrating) {
-    // still show empty plot
     drawPlot(null, null, null);
     return;
   }
@@ -798,14 +798,12 @@ function updateLoop(){
   const idx = idxRaw.slice(-n);
   const yRaw = ecgRaw.slice(-n);
 
-  // time relative to last sample: (idx - idx_last)/fs
   const idxLast = idx[idx.length-1];
   const tRaw = new Array(idx.length);
   for (let i=0;i<idx.length;i++){
-    tRaw[i] = (idx[i] - idxLast) / fsRaw; // negative to 0
+    tRaw[i] = (idx[i] - idxLast) / fsRaw;
   }
 
-  // keep only last WINDOW_SEC
   const tMin = -WINDOW_SEC;
   let start = 0;
   while (start < tRaw.length && tRaw[start] < tMin) start++;
@@ -814,21 +812,18 @@ function updateLoop(){
     return;
   }
 
-  const tWindow = tRaw.slice(start);      // from >= -WINDOW_SEC to 0
+  const tWindow = tRaw.slice(start);
   const yWindow = yRaw.slice(start);
 
-  // shift to start at 0
   const t0 = tWindow[0];
-  const tShift = tWindow.map(v => v - t0); // 0..~WINDOW_SEC
+  const tShift = tWindow.map(v => v - t0);
 
-  // resample to fixed FS_RESAMP_HZ on [0, WINDOW_SEC)
   const nDs = Math.max(2, Math.floor(WINDOW_SEC * FS_RESAMP_HZ));
   const tDs = new Array(nDs);
   for (let i=0;i<nDs;i++){
     tDs[i] = i / FS_RESAMP_HZ;
   }
 
-  // linear interp
   const yDs = new Array(nDs);
   let j = 0;
   for (let i=0;i<nDs;i++){
@@ -853,7 +848,6 @@ function updateLoop(){
   const peaks = updateHrAndPeaks(tDs, yDs);
   drawPlot(tDs, yDs, peaks);
 }
-
 setInterval(updateLoop, UPDATE_MS);
 
 /* ================== Recording (buffer + download CSV) ================== */
@@ -893,7 +887,6 @@ async function stopRecordingAndSave(){
 
   const fsOrig = (fsEst && fsEst > 0) ? fsEst : FS_RESAMP_HZ;
 
-  // raw time vector
   const idx0 = recIdxRaw[0];
   const tRaw = recIdxRaw.map(i => (i - idx0) / fsOrig);
   const tEnd = tRaw[tRaw.length-1];
@@ -907,8 +900,7 @@ async function stopRecordingAndSave(){
     tDs[i] = i * dtOut;
   }
 
-  // ECG: linear interp
-  const ecgVals = recEcgRaw.map(v => v * 1.0); // float
+  const ecgVals = recEcgRaw.map(v => v * 1.0);
   const ecgOut = new Array(nOut);
 
   let j = 0;
@@ -924,13 +916,11 @@ async function stopRecordingAndSave(){
       const a = (x - x0) / (x1 - x0);
       yi = y0 + a*(y1 - y0);
     }
-    ecgOut[i] = yi * flipSign; // save with flip applied
+    ecgOut[i] = yi * flipSign;
   }
 
-  // Battery: ZOH
   const battOut = zohResample(recBattRaw, tRaw, tDs);
 
-  // build CSV text
   const lines = [];
   lines.push("# TinZr ECG Recording (resampled to fixed Fs)");
   lines.push("# DateTime: " + new Date().toISOString());
@@ -983,4 +973,3 @@ setStatus(webBleAvailable() ? "Idle" : "Web Bluetooth not available");
 </script>
 </body>
 </html>
-
