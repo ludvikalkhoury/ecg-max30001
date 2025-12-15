@@ -318,6 +318,9 @@ let recBattRaw = [];
 let recordCountdownTimer = null;
 let recordStopTimer = null;
 
+
+
+
 /* ✅ NEW: store latest image as blob URL (iPhone requires user tap to open) */
 let lastImageUrl = null;
 let lastImageDataUrl = null;
@@ -948,13 +951,32 @@ async function startRecordingCountdown(){
     recordCountdownTimer = null;
 
     recording = true;
-    setStatus(`Recording... (${RECORD_DURATION_SEC}s)`);
 
-    recordStopTimer = setTimeout(() => {
-      stopRecordingAndSaveImage();
-      setToggle(tglRecord, false);
-      enableControls();
-    }, RECORD_DURATION_SEC * 1000);
+// ✅ 30s countdown display
+let recLeft = RECORD_DURATION_SEC;
+setStatus(`Recording... ${recLeft}s left`);
+
+if (recordProgressTimer){
+  clearInterval(recordProgressTimer);
+  recordProgressTimer = null;
+}
+recordProgressTimer = setInterval(() => {
+  recLeft -= 1;
+  if (recLeft > 0){
+    setStatus(`Recording... ${recLeft}s left`);
+  } else {
+    clearInterval(recordProgressTimer);
+    recordProgressTimer = null;
+  }
+}, 1000);
+
+// Auto-stop
+recordStopTimer = setTimeout(() => {
+  stopRecordingAndSaveImage();
+  setToggle(tglRecord, false);
+  enableControls();
+}, RECORD_DURATION_SEC * 1000);
+
 
   }, 1000);
 
@@ -969,6 +991,12 @@ function formatStamp(d){
 
   
 function stopRecordingAndSaveImage(){
+  if (recordProgressTimer){
+  clearInterval(recordProgressTimer);
+  recordProgressTimer = null;
+}
+
+  
   if (recordCountdownTimer){ clearInterval(recordCountdownTimer); recordCountdownTimer = null; }
   if (recordStopTimer){ clearTimeout(recordStopTimer); recordStopTimer = null; }
 
@@ -1092,6 +1120,7 @@ enableControls();
 </script>
 </body>
 </html>
+
 
 
 
