@@ -23,7 +23,7 @@
     --border: rgba(255,255,255,0.10);
   }
 
-  /* ✅ CRITICAL FIX: prevents overflow on iPhone (100% + padding/border) */
+  /* ✅ Critical: prevent iPhone overflow */
   *, *::before, *::after { box-sizing: border-box; }
 
   html,body{
@@ -32,10 +32,9 @@
     background:var(--bg);
     color:var(--text);
     font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-    overflow-x: hidden;
+    overflow-x:hidden;
   }
 
-  /* ===== Responsive iPhone-first container ===== */
   .app{
     width: min(600px, calc(100vw - 24px));
     height: calc(100vh - 24px);
@@ -194,7 +193,6 @@
     text-align:center;
   }
 
-  /* iPhone breakpoint */
   @media (max-width: 430px){
     .grid{ grid-template-columns: 1fr; }
     .row2{ grid-template-columns: 1fr; gap: 10px; }
@@ -209,7 +207,6 @@
 <div class="app">
   <div class="header">
     <div class="title">TinZr ECG Viewer</div>
-    <!-- ✅ Battery text matches Python behavior: show latest batt_pct -->
     <button class="battBtn" id="btnBatt">🔋 --%</button>
   </div>
 
@@ -270,6 +267,10 @@ const WINDOW_SEC = 5.0;
 const UPDATE_MS = 10;
 const MAX_RAW_SAMPLES = 40000;
 
+/* ✅ New: record behavior */
+const RECORD_DELAY_SEC = 5;
+const RECORD_DURATION_SEC = 30;
+
 /* ================== STATE ================== */
 let bleDevice = null;
 let gattServer = null;
@@ -296,10 +297,14 @@ let calibStartCount = null;
 const CALIB_SAMPLES = Math.floor(4 * FS_RESAMP_HZ);
 let calibrating = false;
 
-// Recording buffers (raw; resample on stop)
+// Recording buffers (raw; for image + optional csv)
 let recIdxRaw = [];
 let recEcgRaw = [];
 let recBattRaw = [];
+
+/* New timers for countdown + auto-stop */
+let recordCountdownTimer = null;
+let recordStopTimer = null;
 
 /* ================== UI ================== */
 const btnFind = document.getElementById("btnFind");
@@ -325,7 +330,6 @@ function webBleAvailable(){
 }
 
 function setBatteryText(){
-  // match your Python idea: display percentage when available
   if (battPct !== null && battPct >= 0){
     btnBatt.textContent = `🔋 ${battPct}%`;
   }else{
@@ -376,18 +380,25 @@ btnFind.addEventListener("click", async () => {
     selectedDeviceEl.textContent = device.name || "Selected device";
     setStatus("Device selected");
 
-    // reset toggles
     setToggle(tglConnect, false);
     setToggle(tglStream, false);
     setToggle(tglRecord, false);
 
-    // Handle unexpected disconnects
     bleDevice.addEventListener("gattserverdisconnected", () => {
       streaming = false;
       recording = false;
       rxChar = null;
       txChar = null;
       gattServer = null;
+
+      if (recordCountdownTimer){
+        clearInterval(recordCountdownTimer);
+        recordCountdownTimer = null;
+      }
+      if (recordStopTimer){
+        clearTimeout(recordStopTimer);
+        recordStopTimer = null;
+      }
 
       setToggle(tglConnect, false);
       setToggle(tglStream, false);
@@ -456,6 +467,15 @@ async function disconnectDevice(){
   txChar = null;
   gattServer = null;
 
+  if (recordCountdownTimer){
+    clearInterval(recordCountdownTimer);
+    recordCountdownTimer = null;
+  }
+  if (recordStopTimer){
+    clearTimeout(recordStopTimer);
+    recordStopTimer = null;
+  }
+
   setStatus("Disconnected");
   enableControls();
 }
@@ -489,7 +509,6 @@ async function startStreaming(){
   }
 
   try{
-    // Reset buffers
     streaming = false;
     byteBuf = [];
 
@@ -502,12 +521,10 @@ async function startStreaming(){
     calibStartCount = null;
     calibrating = true;
 
-    // Reset recording buffers too (matches Python)
     recIdxRaw = [];
     recEcgRaw = [];
     recBattRaw = [];
 
-    // Reset HUD state
     hrBpm = null;
     updateHud();
 
@@ -533,8 +550,17 @@ async function stopStreaming(){
   streaming = false;
 
   if (recording){
-    await stopRecordingAndSave();
+    stopRecordingAndSaveImage();
     setToggle(tglRecord, false);
+  }
+
+  if (recordCountdownTimer){
+    clearInterval(recordCountdownTimer);
+    recordCountdownTimer = null;
+  }
+  if (recordStopTimer){
+    clearTimeout(recordStopTimer);
+    recordStopTimer = null;
   }
 
   setStatus("Streaming stopped");
@@ -574,7 +600,6 @@ btnFlip.addEventListener("click", () => {
   const next = !pressed;
   btnFlip.setAttribute("aria-pressed", next ? "true" : "false");
 
-  // checked => -1, unchecked => +1
   flipSign = next ? -1.0 : 1.0;
 });
 
@@ -602,7 +627,7 @@ function onNotify(ev){
     );
     const batt_i = byteBuf[off+4];
 
-    // ✅ Like your Python: ALWAYS update battery, even if streaming=false
+    // Always update battery even if not streaming (same as Python)
     battPct = batt_i;
     setBatteryText();
 
@@ -647,6 +672,7 @@ function onNotify(ev){
           idxRaw = [];
           ecgRaw = [];
 
+          // clear any recording buffer
           recIdxRaw = [];
           recEcgRaw = [];
           recBattRaw = [];
@@ -768,7 +794,7 @@ function drawPlot(t, y, peaksIdx){
 
   if (!t || !y || y.length < 2) return;
 
-  // dynamic y-range 3× (same as your Python request)
+  // dynamic y-range 3×
   let vmin = Infinity, vmax = -Infinity;
   for (let i=0;i<y.length;i++){
     if (y[i] < vmin) vmin = y[i];
@@ -864,7 +890,6 @@ function updateLoop(){
   let j = 0;
   for (let i=0;i<nDs;i++){
     const x = tDs[i];
-
     while (j < tShift.length-2 && tShift[j+1] < x) j++;
 
     const x0 = tShift[j];
@@ -885,129 +910,185 @@ function updateLoop(){
 }
 setInterval(updateLoop, UPDATE_MS);
 
-/* ================== Recording (buffer + download CSV) ================== */
-async function startRecording(){
+/* ================== Record: 5s countdown, 30s capture, auto-save PNG ================== */
+async function startRecordingCountdown(){
   if (!streaming){
     setStatus("Start streaming before recording");
     return false;
   }
-  recording = true;
+
+  // Clear any previous timers
+  if (recordCountdownTimer){
+    clearInterval(recordCountdownTimer);
+    recordCountdownTimer = null;
+  }
+  if (recordStopTimer){
+    clearTimeout(recordStopTimer);
+    recordStopTimer = null;
+  }
+
+  // Reset buffers
   recIdxRaw = [];
   recEcgRaw = [];
   recBattRaw = [];
-  setStatus("Recording (buffering, resample on stop)");
+  recording = false;
+
+  let remaining = RECORD_DELAY_SEC;
+  setStatus(`Recording starts in ${remaining}s`);
+
+  recordCountdownTimer = setInterval(() => {
+    remaining -= 1;
+
+    if (remaining > 0){
+      setStatus(`Recording starts in ${remaining}s`);
+      return;
+    }
+
+    clearInterval(recordCountdownTimer);
+    recordCountdownTimer = null;
+
+    // Start recording
+    recording = true;
+    setStatus(`Recording... (${RECORD_DURATION_SEC}s)`);
+
+    // Auto-stop
+    recordStopTimer = setTimeout(() => {
+      stopRecordingAndSaveImage();
+      setToggle(tglRecord, false);
+      enableControls();
+    }, RECORD_DURATION_SEC * 1000);
+
+  }, 1000);
+
   return true;
 }
 
-function zohResample(vals, tRaw, tDs){
-  if (!vals.length) return new Array(tDs.length).fill(0);
-  const out = new Array(tDs.length);
-  let j = 0;
-  for (let i=0;i<tDs.length;i++){
-    const x = tDs[i];
-    while (j < tRaw.length-1 && tRaw[j+1] <= x) j++;
-    out[i] = vals[j];
+function stopRecordingAndSaveImage(){
+  // stop timers
+  if (recordCountdownTimer){
+    clearInterval(recordCountdownTimer);
+    recordCountdownTimer = null;
   }
-  return out;
-}
+  if (recordStopTimer){
+    clearTimeout(recordStopTimer);
+    recordStopTimer = null;
+  }
 
-async function stopRecordingAndSave(){
-  recording = false;
-
-  const nRaw = recIdxRaw.length;
-  if (nRaw < 2){
-    setStatus("Recording stopped (no samples)");
+  if (!recording){
+    // If user stopped early before recording started
+    setStatus("Recording cancelled");
     return;
   }
 
-  const fsOrig = (fsEst && fsEst > 0) ? fsEst : FS_RESAMP_HZ;
+  recording = false;
 
-  const idx0 = recIdxRaw[0];
-  const tRaw = recIdxRaw.map(i => (i - idx0) / fsOrig);
-  const tEnd = tRaw[tRaw.length-1];
-
-  const dtOut = 1.0 / FS_RESAMP_HZ;
-  let nOut = Math.floor(tEnd * FS_RESAMP_HZ);
-  if (nOut < 1) nOut = 1;
-
-  const tDs = new Array(nOut);
-  for (let i=0;i<nOut;i++){
-    tDs[i] = i * dtOut;
+  const n = recEcgRaw.length;
+  if (n < 10){
+    setStatus("Recording too short");
+    return;
   }
 
-  // ECG linear interp
-  const ecgVals = recEcgRaw.map(v => v * 1.0);
-  const ecgOut = new Array(nOut);
+  setStatus("Saving ECG image…");
 
-  let j = 0;
-  for (let i=0;i<nOut;i++){
-    const x = tDs[i];
-    while (j < tRaw.length-2 && tRaw[j+1] < x) j++;
+  // Make a wide image: px per second * duration
+  const widthPerSecond = 220;              // wider = more detail
+  const width = Math.max(1400, Math.floor(widthPerSecond * RECORD_DURATION_SEC));
+  const height = 420;
 
-    const x0 = tRaw[j], x1 = tRaw[j+1];
-    const y0 = ecgVals[j], y1 = ecgVals[j+1];
+  const out = document.createElement("canvas");
+  out.width = width;
+  out.height = height;
+  const c = out.getContext("2d");
 
-    let yi = y0;
-    if (x1 > x0){
-      const a = (x - x0) / (x1 - x0);
-      yi = y0 + a*(y1 - y0);
-    }
-    ecgOut[i] = yi * flipSign; // save with flip applied
+  // Background
+  c.fillStyle = "#020817";
+  c.fillRect(0, 0, width, height);
+
+  // Title + metadata
+  c.fillStyle = "#E3F2FD";
+  c.font = "18px system-ui";
+  c.fillText("TinZr ECG – 30s Recording", 16, 28);
+
+  c.font = "13px system-ui";
+  const battText = (battPct !== null) ? `Battery: ${battPct}%` : "Battery: --%";
+  const fsText = (fsEst && fsEst > 0) ? `Fs_in≈${fsEst.toFixed(1)} Hz` : "Fs_in≈-- Hz";
+  c.fillText(`${fsText}   |   ${battText}`, 16, 50);
+
+  // Plot area
+  const left = 40, right = 16, top = 70, bottom = 30;
+  const plotW = width - left - right;
+  const plotH = height - top - bottom;
+
+  // Compute scaling (3× range, similar feel to on-screen)
+  let vmin = Infinity, vmax = -Infinity;
+  for (let i=0;i<n;i++){
+    const v = recEcgRaw[i] * flipSign;
+    if (v < vmin) vmin = v;
+    if (v > vmax) vmax = v;
   }
+  let center = 0.5*(vmin+vmax);
+  let halfRange = 0.5*(vmax-vmin) * 3.0;
+  if (halfRange < 1e-6) halfRange = 1.0;
 
-  // Battery ZOH
-  const battOut = zohResample(recBattRaw, tRaw, tDs);
+  const yLow = center - halfRange;
+  const yHigh = center + halfRange;
 
-  const lines = [];
-  lines.push("# TinZr ECG Recording (resampled to fixed Fs)");
-  lines.push("# DateTime: " + new Date().toISOString());
-  lines.push("# Fs_orig_Hz: " + fsOrig.toFixed(6));
-  lines.push("# Fs_out_Hz: " + FS_RESAMP_HZ.toFixed(6));
-  lines.push("# N_raw: " + nRaw);
-  lines.push("# N_out: " + nOut);
-  lines.push("# Columns: time_s, ecg, batt_pct");
-  lines.push("time_s,ecg,batt_pct");
+  function xPix(i){ return left + (i / (n-1)) * plotW; }
+  function yPix(v){ return top + (yHigh - v) * (plotH / (yHigh - yLow)); }
 
-  for (let i=0;i<nOut;i++){
-    lines.push(`${tDs[i].toFixed(6)},${ecgOut[i].toFixed(6)},${Number(battOut[i]).toFixed(2)}`);
+  // Axes labels
+  c.fillStyle = "#E0E8FF";
+  c.font = "14px system-ui";
+  c.save();
+  c.translate(16, top + plotH/2);
+  c.rotate(-Math.PI/2);
+  c.textAlign = "center";
+  c.fillText("ECG", 0, 0);
+  c.restore();
+
+  c.textAlign = "center";
+  c.fillText("Time (s)", left + plotW/2, height - 10);
+
+  // ECG trace
+  c.strokeStyle = "#F5F5F5";
+  c.lineWidth = 1.6;
+  c.beginPath();
+  for (let i=0;i<n;i++){
+    const v = recEcgRaw[i] * flipSign;
+    const xp = xPix(i);
+    const yp = yPix(v);
+    if (i===0) c.moveTo(xp, yp);
+    else c.lineTo(xp, yp);
   }
+  c.stroke();
 
-  const blob = new Blob([lines.join("\n")], {type: "text/csv;charset=utf-8"});
-  const url = URL.createObjectURL(blob);
-
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "tinzr_ecg_120Hz.csv";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-
-  URL.revokeObjectURL(url);
-
-  setStatus("Recording saved (downloaded CSV)");
+  // Export image (iOS: user taps "Save Image" to Photos)
+  out.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "tinzr_ecg_30s.png";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setStatus("Image downloaded (use Save Image → Photos)");
+  }, "image/png");
 }
 
+/* Record toggle wiring */
 tglRecord.addEventListener("click", async () => {
   const wantOn = !getToggle(tglRecord);
 
   if (wantOn){
-    const ok = await startRecording();
+    const ok = await startRecordingCountdown();
     setToggle(tglRecord, !!ok);
   }else{
     setToggle(tglRecord, false);
-    await stopRecordingAndSave();
+    stopRecordingAndSaveImage(); // stop early if needed
   }
   enableControls();
 });
-
-/* ================== init ================== */
-setToggle(tglConnect, false);
-setToggle(tglStream, false);
-setToggle(tglRecord, false);
-setBatteryText();
-enableControls();
-updateHud();
-setStatus(webBleAvailable() ? "Idle" : "Web Bluetooth not available");
 </script>
 </body>
 </html>
