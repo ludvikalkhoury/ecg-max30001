@@ -1013,9 +1013,11 @@ function stopRecordingAndSaveImage(){
   c.font = "18px system-ui";
   c.fillText("TinZr ECG – 30s Recording", 16, 28);
 
+
+  
   c.font = "13px system-ui";
   const battText = (battPct !== null) ? `Battery: ${battPct}%` : "Battery: --%";
-  const fsText = (fsEst && fsEst > 0) ? `Fs_in≈${fsEst.toFixed(1)} Hz` : "Fs_in≈-- Hz";
+  const fsText = (fsEst && fsEst > 0) ? `Fs_out≈${FS_RESAMP_HZ.toFixed(1)} Hz` : "Fs_out≈-- Hz";
   c.fillText(`${fsText}   |   ${battText}`, 16, 50);
 
   const stamp = formatStamp(new Date());
@@ -1104,3 +1106,4 @@ enableControls();
 </script>
 </body>
 </html>
+
