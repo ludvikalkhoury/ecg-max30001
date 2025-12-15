@@ -383,21 +383,11 @@ btnOpenImage.addEventListener("click", () => {
     setStatus("No saved image yet");
     return;
   }
-
-  // Open a new tab/window from a USER gesture (allowed)
-  const w = window.open("about:blank", "_blank");
-
-  if (w){
-    // ✅ IMPORTANT: set location directly (works better than document.write on iOS)
-    w.location.href = lastImageDataUrl;
-    setStatus("Image opened. Use Share → Save Image (or long-press).");
-  } else {
-    // Popup blocked → user can still long-press preview
-    setStatus("Popup blocked. Long-press the preview image → Save Image.");
-    imgPreview.style.display = "block";
-    imgPreview.src = lastImageDataUrl;
-  }
+  imgPreview.style.display = "block";
+  imgPreview.src = lastImageDataUrl;
+  setStatus("Long-press the image below → Save Image.");
 });
+
 
 
 
@@ -1103,5 +1093,6 @@ enableControls();
 </script>
 </body>
 </html>
+
 
 
