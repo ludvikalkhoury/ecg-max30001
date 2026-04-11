@@ -270,6 +270,8 @@ const FS_RESAMP_HZ = 120.0;
 const WINDOW_SEC = 5.0;
 const UPDATE_MS = 10;
 const MAX_RAW_SAMPLES = 40000;
+const SIGNAL_SETTLE_SEC = 5.0;
+const SWEEP_GAP_SEC = 0.16;
 
 // Record behavior
 const RECORD_DELAY_SEC = 5;
@@ -298,8 +300,9 @@ let ecgRaw = [];
 // Calibration
 let calibStartTime = null;
 let calibStartCount = null;
-const CALIB_SAMPLES = Math.floor(4 * FS_RESAMP_HZ);
+const MIN_CALIB_SAMPLES = 10;
 let calibrating = false;
+let settleLastStatusSec = null;
 
 // Recording buffers
 let recIdxRaw = [];
@@ -359,6 +362,11 @@ function enableControls(){
 }
 
 function updateHud(){
+  if (streaming && (fsEst === null || calibrating)){
+    hudEl.textContent = "";
+    return;
+  }
+
   let fsText = (fsEst && fsEst > 0)
     ? `Fs_in≈${fsEst.toFixed(1)} Hz  →  Fs_out=${FS_RESAMP_HZ.toFixed(1)} Hz`
     : `Fs_out=${FS_RESAMP_HZ.toFixed(1)} Hz`;
@@ -518,6 +526,7 @@ async function startStreaming(){
     calibStartTime = null;
     calibStartCount = null;
     calibrating = true;
+    settleLastStatusSec = null;
 
     recIdxRaw = [];
     recEcgRaw = [];
@@ -533,7 +542,7 @@ async function startStreaming(){
     await writeCmd(CMD_START);
 
     streaming = true;
-    setStatus("Starting ECG streaming...");
+    setStatus(`Settling signal for ${SIGNAL_SETTLE_SEC.toFixed(0)}s...`);
     return true;
   }catch(e){
     streaming = false;
@@ -657,11 +666,18 @@ function onNotify(ev){
     if (calibStartTime === null){
       calibStartTime = performance.now() / 1000.0;
       calibStartCount = sampleCount;
+      settleLastStatusSec = SIGNAL_SETTLE_SEC;
     }else{
       const nSamp = sampleCount - calibStartCount;
-      if (nSamp >= CALIB_SAMPLES){
-        const tNow = performance.now() / 1000.0;
-        const dt = tNow - calibStartTime;
+      const tNow = performance.now() / 1000.0;
+      const dt = tNow - calibStartTime;
+      const remaining = Math.max(0, Math.ceil(SIGNAL_SETTLE_SEC - dt));
+      if (remaining !== settleLastStatusSec){
+        settleLastStatusSec = remaining;
+        if (remaining > 0) setStatus(`Settling signal for ${remaining}s...`);
+      }
+
+      if (dt >= SIGNAL_SETTLE_SEC && nSamp >= MIN_CALIB_SAMPLES){
         if (dt > 0){
           fsEst = nSamp / dt;
 
@@ -678,6 +694,7 @@ function onNotify(ev){
           calibStartTime = null;
           calibStartCount = null;
           calibrating = false;
+          settleLastStatusSec = null;
 
           setStatus("Streaming");
         }
@@ -759,7 +776,7 @@ function resizeCanvas(){
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
-function drawPlot(t, y, peaksIdx){
+function drawPlot(t, y, peaksIdx, sweepPhaseSec=null){
   const w = canvas.getBoundingClientRect().width;
   const h = canvas.getBoundingClientRect().height;
 
@@ -775,6 +792,23 @@ function drawPlot(t, y, peaksIdx){
 
   ctx.fillStyle = "#020817";
   ctx.fillRect(0,0,w,h);
+
+  ctx.strokeStyle = "rgba(90,167,255,0.13)";
+  ctx.lineWidth = 1;
+  const gridX = plotW / WINDOW_SEC;
+  for (let x=left; x<=left+plotW+0.1; x+=gridX){
+    ctx.beginPath();
+    ctx.moveTo(x, top);
+    ctx.lineTo(x, top + plotH);
+    ctx.stroke();
+  }
+  const gridY = plotH / 6;
+  for (let yGrid=top; yGrid<=top+plotH+0.1; yGrid+=gridY){
+    ctx.beginPath();
+    ctx.moveTo(left, yGrid);
+    ctx.lineTo(left + plotW, yGrid);
+    ctx.stroke();
+  }
 
   ctx.fillStyle = "#E0E8FF";
   ctx.font = "12px system-ui";
@@ -808,17 +842,47 @@ function drawPlot(t, y, peaksIdx){
 
   function xPix(x){ return left + (x - xMin) * (plotW / (xMax - xMin)); }
   function yPix(v){ return top + (yHigh - v) * (plotH / (yHigh - yLow)); }
-
-  ctx.strokeStyle = "#F5F5F5";
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  for (let i=0;i<y.length;i++){
-    const xp = xPix(t[i]);
-    const yp = yPix(y[i]);
-    if (i===0) ctx.moveTo(xp, yp);
-    else ctx.lineTo(xp, yp);
+  function isInSweepGap(x){
+    if (sweepPhaseSec === null) return false;
+    const ahead = (x - sweepPhaseSec + WINDOW_SEC) % WINDOW_SEC;
+    return ahead > 0 && ahead < SWEEP_GAP_SEC;
   }
-  ctx.stroke();
+  function pointX(i){
+    if (sweepPhaseSec === null) return t[i];
+    const latestT = t[t.length - 1];
+    const age = latestT - t[i];
+    return (sweepPhaseSec - age + WINDOW_SEC * 1000) % WINDOW_SEC;
+  }
+
+  if (sweepPhaseSec !== null){
+    const cursorX = xPix(sweepPhaseSec);
+    ctx.strokeStyle = "rgba(109,255,139,0.75)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cursorX, top);
+    ctx.lineTo(cursorX, top + plotH);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = sweepPhaseSec === null ? "#F5F5F5" : "#6DFF8B";
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  let hasPath = false;
+  let prevXp = null;
+  for (let i=0;i<y.length;i++){
+    const x = pointX(i);
+    if (isInSweepGap(x)){
+      prevXp = null;
+      continue;
+    }
+    const xp = xPix(x);
+    const yp = yPix(y[i]);
+    if (prevXp === null || Math.abs(xp - prevXp) > plotW * 0.5) ctx.moveTo(xp, yp);
+    else ctx.lineTo(xp, yp);
+    prevXp = xp;
+    hasPath = true;
+  }
+  if (hasPath) ctx.stroke();
 
   if (peaksIdx && peaksIdx.length){
     ctx.lineWidth = 1.5;
@@ -826,7 +890,9 @@ function drawPlot(t, y, peaksIdx){
     ctx.fillStyle = "#FFCDD2";
 
     for (const i of peaksIdx){
-      const xp = xPix(t[i]);
+      const x = pointX(i);
+      if (isInSweepGap(x)) continue;
+      const xp = xPix(x);
       const yp = yPix(y[i]);
       ctx.beginPath();
       ctx.arc(xp, yp, 4, 0, Math.PI*2);
@@ -875,7 +941,14 @@ function updateLoop(){
   const t0 = tWindow[0];
   const tShift = tWindow.map(v => v - t0); // 0..~WINDOW_SEC
 
-  const nDs = Math.max(2, Math.floor(WINDOW_SEC * FS_RESAMP_HZ));
+  const availableSec = tShift[tShift.length - 1];
+  if (availableSec <= 0){
+    drawPlot(null, null, null);
+    return;
+  }
+
+  const displaySec = Math.min(WINDOW_SEC, availableSec);
+  const nDs = Math.max(2, Math.floor(displaySec * FS_RESAMP_HZ) + 1);
   const tDs = new Array(nDs);
   for (let i=0;i<nDs;i++){
     tDs[i] = i / FS_RESAMP_HZ;
@@ -902,7 +975,8 @@ function updateLoop(){
   }
 
   const peaks = updateHrAndPeaks(tDs, yDs);
-  drawPlot(tDs, yDs, peaks);
+  const sweepPhase = (idxLast / fsRaw) % WINDOW_SEC;
+  drawPlot(tDs, yDs, peaks, sweepPhase);
 }
 setInterval(updateLoop, UPDATE_MS);
 
